@@ -3,6 +3,7 @@
 #include <boost/function.hpp>
 #include <string>
 #include <vector>
+#include <iostream>
 
 #include "caffe/net.hpp"
 #include "caffe/solver_factory.hpp"

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "mpi.h"
+
 #include "caffe/solver.hpp"
 #include "caffe/util/format.hpp"
 #include "caffe/util/hdf5.hpp"
@@ -178,6 +180,28 @@ void Solver<Dtype>::InitTestNets() {
 
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
+  // global variable
+  int blob_num = net_->learnable_params().size();
+  int neuron_sum = 0;
+  int* neuron_num = new int[blob_num];
+  for (int i = 0 ; i < blob_num; ++i) {
+    neuron_num[i] = net_->learnable_params()[i]->count();
+    neuron_sum += neuron_num[i]; 
+  }
+  int numprocs, myid;
+  MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+  MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+  // exchanged
+  double* myDiff = new double[neuron_sum];
+  // sync data
+  double* gDiff = new double[neuron_sum];
+  int counter = 0;
+
+  // for (int i = 50; i < 60; ++i) {
+  //     std::cout << myDiff[i] << " ";
+  //   }
+  //   std::cout << std::endl;
+
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
   int average_loss = this->param_.average_loss();
@@ -186,6 +210,7 @@ void Solver<Dtype>::Step(int iters) {
   iteration_timer_.Start();
 
   while (iter_ < stop_iter) {
+    
     // zero-init the params
     net_->ClearParamDiffs();
     if (param_.test_interval() && iter_ % param_.test_interval() == 0
@@ -209,6 +234,7 @@ void Solver<Dtype>::Step(int iters) {
     for (int i = 0; i < param_.iter_size(); ++i) {
       loss += net_->ForwardBackward();
     }
+
     loss /= param_.iter_size();
     // average the loss across iterations for smoothed reporting
     UpdateSmoothedLoss(loss, start_iter, average_loss);
@@ -243,6 +269,26 @@ void Solver<Dtype>::Step(int iters) {
     for (int i = 0; i < callbacks_.size(); ++i) {
       callbacks_[i]->on_gradients_ready();
     }
+
+    counter = 0;
+    for (int i = 0; i < blob_num; ++i) {
+      for (int j = 0; j < neuron_num[i]; ++j) {
+        myDiff[counter++] = net_->learnable_params()[i]->cpu_diff()[j];
+      }
+    }
+    MPI_Allreduce(myDiff, gDiff, neuron_sum, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    for (int i = 0; i < neuron_sum; ++i) {
+      gDiff[i] /= numprocs;
+    }
+
+    counter = 0;
+    for (int i = 0; i < blob_num; ++i) {
+      for (int j = 0; j < neuron_num[i]; ++j) {
+        net_->learnable_params()[i]->mutable_cpu_diff()[j] = gDiff[counter++];
+      }
+    }
+
     ApplyUpdate();
 
     // Increment the internal iter_ counter -- its value should always indicate
@@ -263,7 +309,12 @@ void Solver<Dtype>::Step(int iters) {
       // Break out of training loop.
       break;
     }
+
   }
+  delete [] myDiff;
+  delete [] gDiff;
+  delete [] neuron_num;
+  MPI_Finalize();
 }
 
 template <typename Dtype>

@@ -1,6 +1,5 @@
-# Caffe
+# Caffe (MPI Version)
 
-[![Build Status](https://travis-ci.org/BVLC/caffe.svg?branch=master)](https://travis-ci.org/BVLC/caffe)
 [![License](https://img.shields.io/badge/license-BSD-blue.svg)](LICENSE)
 
 Caffe is a deep learning framework made with expression, speed, and modularity in mind.
@@ -17,7 +16,7 @@ and step-by-step examples.
 
 ## Custom distributions
 
- - [Intel Caffe](https://github.com/BVLC/caffe/tree/intel) (Optimized for CPU and support for multi-node), in particular Xeon processors (HSW, BDW, Xeon Phi).
+- [Intel Caffe](https://github.com/BVLC/caffe/tree/intel) (Optimized for CPU and support for multi-node), in particular Xeon processors (HSW, BDW, Xeon Phi).
 - [OpenCL Caffe](https://github.com/BVLC/caffe/tree/opencl) e.g. for AMD or Intel devices.
 - [Windows Caffe](https://github.com/BVLC/caffe/tree/windows)
 
@@ -43,3 +42,45 @@ Please cite Caffe in your publications if it helps your research:
       Title = {Caffe: Convolutional Architecture for Fast Feature Embedding},
       Year = {2014}
     }
+
+## Fork Modified
+
+### Personal Work
+
+Add MPI(MPICH 3) for Caffe to support training process with mutiple machine (CPU Vesrion).
+Currently, I have mainly modified `solver.cpp` for diff collection and `data_layer.cpp` for distribute dataset among different computing nodes.
+
+### Prequisite & Dependency
+
+- Caffe Dependency (Same as [original version](http://caffe.berkeleyvision.org/installation.html))
+- MPICH3
+
+### Usage
+
+Compile source code after finishing installed the dependencies.
+To enable MPI-support, you should config customized compiler in `Makefile.config.example`:
+
+```makefile
+>>> origin
+# To customize your choice of compiler, uncomment and set the following.
+# N.B. the default for Linux is g++ and the default for OSX is clang++
+# CUSTOM_CXX := g++
+<<< modified
+# To customize your choice of compiler, uncomment and set the following.
+# N.B. the default for Linux is g++ and the default for OSX is clang++
+CUSTOM_CXX := mpic++
+>>>
+```
+
+Use `make all` to complie:
+
+```bash
+cd $(CAFFE_ROOT)
+make all
+```
+
+Use `mpirun` to train models: `mpirun -n 2 ./build/tools/caffe train --solver=examples/mnist/lenet_solver.prototxt`
+
+### Note
+
+Because of the use of mpic++ and mpirun, `make runtest` is not available currently, and I am trying to fix this problem.

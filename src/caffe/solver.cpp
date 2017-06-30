@@ -11,6 +11,8 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
 
+#include "ps/worker.hpp"
+
 namespace caffe {
 
 template<typename Dtype>
@@ -180,6 +182,10 @@ void Solver<Dtype>::InitTestNets() {
 
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
+  // test ps
+  ps::Worker worker;
+  worker.test();
+
   // global variable
   int blob_num = net_->learnable_params().size();
   int neuron_sum = 0;
@@ -196,11 +202,6 @@ void Solver<Dtype>::Step(int iters) {
   // sync data
   double* gDiff = new double[neuron_sum];
   int counter = 0;
-
-  // for (int i = 50; i < 60; ++i) {
-  //     std::cout << myDiff[i] << " ";
-  //   }
-  //   std::cout << std::endl;
 
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;

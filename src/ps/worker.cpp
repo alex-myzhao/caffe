@@ -2,9 +2,17 @@
 
 namespace ps {
 
-void Worker::test() {
-  std::cout << "-------------- this is a test message" << std::endl;
-  std::cout << "-------------- this is another test message" << std::endl;
+void Worker::push() {
+
 }
+
+void Worker::pull() {
+
+}
+
+void Worker::push_async() {}
+void Worker::pull_async() {}
+void Worker::computeGrad() {}
+void Worker::wait() {}
 
 }

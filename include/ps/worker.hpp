@@ -1,13 +1,21 @@
 #ifndef PS_WORKER_HPP_
 #define PS_WORKER_HPP_
-#include <iostream>
+
+#include "mpi.h"
 
 namespace ps {
 
 class Worker {
   public:
-    Worker() {}
-    void test();
+    Worker(int rank) : rank_(rank) {}
+    void push();
+    void pull();
+    void push_async();
+    void pull_async();
+    void computeGrad();
+    void wait();
+  private:
+    int rank_;
 }; 
 
 }

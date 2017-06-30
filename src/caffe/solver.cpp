@@ -2,7 +2,7 @@
 
 #include <string>
 #include <vector>
-
+ 
 #include "mpi.h"
 
 #include "caffe/solver.hpp"
@@ -182,10 +182,6 @@ void Solver<Dtype>::InitTestNets() {
 
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
-  // test ps
-  ps::Worker worker;
-  worker.test();
-
   // global variable
   int blob_num = net_->learnable_params().size();
   int neuron_sum = 0;

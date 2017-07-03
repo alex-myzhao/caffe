@@ -14,6 +14,7 @@ namespace bp = boost::python;
 #include "boost/algorithm/string.hpp"
 #include "caffe/caffe.hpp"
 #include "caffe/util/signal_handler.h"
+#include "ps/psenv.hpp"
 
 using caffe::Blob;
 using caffe::Caffe;
@@ -428,10 +429,7 @@ RegisterBrewFunction(time);
 
 int main(int argc, char** argv) {
   // Initialize MPI
-  MPI_Init(&argc, &argv);
-  int size, rank;
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  ps::Psenv::initalize(&argc, &argv);
 
   // Print output to stderr (while still logging).
   FLAGS_alsologtostderr = 1;

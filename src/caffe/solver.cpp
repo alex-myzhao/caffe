@@ -1,5 +1,6 @@
 #include <cstdio>
 
+#include <iostream>
 #include <string>
 #include <vector>
  
@@ -11,9 +12,13 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
 
+#include "ps/psenv.hpp"
 #include "ps/server.hpp"
 #include "ps/worker.hpp"
-#include "ps/message.hpp"
+
+using ps::Psenv;
+using ps::Server;
+using ps::Worker;
 
 namespace caffe {
 
@@ -184,34 +189,20 @@ void Solver<Dtype>::InitTestNets() {
 
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
+  bool debugPS = false;
   // global variable
-  // int blob_num = net_->learnable_params().size();
-  // int neuron_sum = 0;
-  // int* neuron_num = new int[blob_num];
-  // for (int i = 0 ; i < blob_num; ++i) {
-  //   neuron_num[i] = net_->learnable_params()[i]->count();
-  //   neuron_sum += neuron_num[i]; 
-  // }
+  int blob_num = net_->learnable_params().size();
+  int neuron_sum = 0;
+  int* neuron_num = new int[blob_num];
+  for (int i = 0 ; i < blob_num; ++i) {
+    neuron_num[i] = net_->learnable_params()[i]->count();
+    neuron_sum += neuron_num[i]; 
+  }
 
   // init parameter
-  // ps::Psenv env;
-  // ps::Server* server = NULL;
-  // ps::Worker* worker = NULL;
-
-  // init server or worker for current rank
-  // if (env.isServer()) {
-  //   server = env.getServer();
-  //   assert(server != NULL);
-  //   server.init(neuron_sum);
-  // } else {
-  //   worker = env.getWorker();
-  // }
-
-  // exchanged
-  // double* myDiff = new double[neuron_sum];
-  // sync data
-  // double* gDiff = new double[neuron_sum];
-  // int counter = 0;
+  Psenv* env = Psenv::getEnv(0, neuron_sum);
+  Server* server = env->getServer();
+  Worker* worker = env->getWorker();
 
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
@@ -220,117 +211,143 @@ void Solver<Dtype>::Step(int iters) {
   smoothed_loss_ = 0;
   iteration_timer_.Start();
 
+  int counter = 0;
   while (iter_ < stop_iter) {
-    // // sync version
-    // if (env.isServer()) {
-    //   // server.computeWeight();
-    //   server.sendWeightMsg();
-    //   server.recvDiffMsg();
-    // } else {
-    //   // worker.pull(weight);
-    //   // update weight
-    //   // compute diff here
-    //   // worker.push(diff);
-    // }
-    // zero-init the params
-    net_->ClearParamDiffs();
-    if (param_.test_interval() && iter_ % param_.test_interval() == 0
-        && (iter_ > 0 || param_.test_initialization())) {
-      if (Caffe::root_solver()) {
-        TestAll();
+    if (env->isServer()) {
+      // copy diff to the net
+      counter = 0;
+      for (int i = 0; i < blob_num; ++i) {
+        for (int j = 0; j < neuron_num[i]; ++j) {
+          net_->learnable_params()[i]->mutable_cpu_diff()[j] = server->getDiff()[counter++]; 
+        }
       }
-      if (requested_early_exit_) {
-        // Break out of the while loop because stop was requested while testing.
+
+      // compute weight with diff
+      ApplyUpdate();
+
+      // copy weight from the net
+      counter = 0;
+      for (int i = 0; i < blob_num; ++i) {
+        for (int j = 0; j < neuron_num[i]; ++j) {
+          server->getData()[counter++] = net_->learnable_params()[i]->cpu_data()[j];
+        }
+      }
+
+      // [PS] Send weight to workers
+      if (debugPS) printf("[PS]: Server send weights ...\n");
+      server->sendWeight();
+      if (debugPS) printf("[PS]: --- Weights have been sent ---\n");
+
+      // [PS] Receive diff from workers
+      if (debugPS) printf("[PS]: Server receive gradients ... \n");
+      server->recvDiff();
+      if (debugPS) printf("[PS]: --- Gradient received ---\n");
+
+      iter_++;
+    } else {
+      net_->ClearParamDiffs();
+      // zero-init the params
+      if (param_.test_interval() && iter_ % param_.test_interval() == 0
+          && (iter_ > 0 || param_.test_initialization())) {
+        if (Caffe::root_solver()) {
+          TestAll();
+        }
+        if (requested_early_exit_) {
+          // Break out of the while loop because stop was requested while testing.
+          break;
+        }
+      }
+      for (int i = 0; i < callbacks_.size(); ++i) {
+        callbacks_[i]->on_start();
+      }
+      const bool display = param_.display() && iter_ % param_.display() == 0;
+      net_->set_debug_info(display && param_.debug_info());
+      //  [PS] Get weight from the server
+      if (debugPS) printf("[PS]: Workers pull weights ...\n");
+      worker->pull();
+      if (debugPS) printf("[PS]: --- weights collected ---\n");
+
+      // copy weight to the net
+      counter = 0;
+      for (int i = 0; i < blob_num; ++i) {
+        for (int j = 0; j < neuron_num[i]; ++j) {
+          net_->learnable_params()[i]->mutable_cpu_data()[j] = worker->getData()[counter++];
+        }
+      }
+
+      // accumulate the loss and gradient
+      Dtype loss = 0;
+      for (int i = 0; i < param_.iter_size(); ++i) {
+        loss += net_->ForwardBackward();
+      }
+
+      // copy gradients from the net
+      counter = 0;
+      for (int i = 0; i < blob_num; ++i) {
+        for (int j = 0; j < neuron_num[i]; ++j) {
+          worker->getDiff()[counter++] = net_->learnable_params()[i]->cpu_diff()[j];
+        }
+      }
+
+      // [PS] Push diff to the server
+      if (debugPS) printf("[PS]: Workers push gradients ...\n");
+      worker->push();
+      if (debugPS) printf("[PS]: --- Gradients have been pushed ---\n");
+
+      loss /= param_.iter_size();
+      // average the loss across iterations for smoothed reporting
+      UpdateSmoothedLoss(loss, start_iter, average_loss);
+      if (display) {
+        float lapse = iteration_timer_.Seconds();
+        float per_s = (iter_ - iterations_last_) / (lapse ? lapse : 1);
+        LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
+            << " (" << per_s << " iter/s, " << lapse << "s/"
+            << param_.display() << " iters), loss = " << smoothed_loss_;
+        iteration_timer_.Start();
+        iterations_last_ = iter_;
+        const vector<Blob<Dtype>*>& result = net_->output_blobs();
+        int score_index = 0;
+        for (int j = 0; j < result.size(); ++j) {
+          const Dtype* result_vec = result[j]->cpu_data();
+          const string& output_name =
+              net_->blob_names()[net_->output_blob_indices()[j]];
+          const Dtype loss_weight =
+              net_->blob_loss_weights()[net_->output_blob_indices()[j]];
+          for (int k = 0; k < result[j]->count(); ++k) {
+            ostringstream loss_msg_stream;
+            if (loss_weight) {
+              loss_msg_stream << " (* " << loss_weight
+                              << " = " << loss_weight * result_vec[k] << " loss)";
+            }
+            LOG_IF(INFO, Caffe::root_solver()) << "    Train net output #"
+                << score_index++ << ": " << output_name << " = "
+                << result_vec[k] << loss_msg_stream.str();
+          }
+        }
+      }
+      for (int i = 0; i < callbacks_.size(); ++i) {
+        callbacks_[i]->on_gradients_ready();
+      }
+      // Increment the internal iter_ counter -- its value should always indicate
+      // the number of times the weights have been updated.
+      ++iter_;
+      SolverAction::Enum request = GetRequestedAction();
+
+      // Save a snapshot if needed.
+      if ((param_.snapshot()
+          && iter_ % param_.snapshot() == 0
+          && Caffe::root_solver()) ||
+          (request == SolverAction::SNAPSHOT)) {
+        Snapshot();
+      }
+      if (SolverAction::STOP == request) {
+        requested_early_exit_ = true;
+        // Break out of training loop.
         break;
       }
     }
-
-    for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_start();
-    }
-    const bool display = param_.display() && iter_ % param_.display() == 0;
-    net_->set_debug_info(display && param_.debug_info());
-    // accumulate the loss and gradient
-    Dtype loss = 0;
-    for (int i = 0; i < param_.iter_size(); ++i) {
-      loss += net_->ForwardBackward();
-    }
-
-    loss /= param_.iter_size();
-    // average the loss across iterations for smoothed reporting
-    UpdateSmoothedLoss(loss, start_iter, average_loss);
-    if (display) {
-      float lapse = iteration_timer_.Seconds();
-      float per_s = (iter_ - iterations_last_) / (lapse ? lapse : 1);
-      LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
-          << " (" << per_s << " iter/s, " << lapse << "s/"
-          << param_.display() << " iters), loss = " << smoothed_loss_;
-      iteration_timer_.Start();
-      iterations_last_ = iter_;
-      const vector<Blob<Dtype>*>& result = net_->output_blobs();
-      int score_index = 0;
-      for (int j = 0; j < result.size(); ++j) {
-        const Dtype* result_vec = result[j]->cpu_data();
-        const string& output_name =
-            net_->blob_names()[net_->output_blob_indices()[j]];
-        const Dtype loss_weight =
-            net_->blob_loss_weights()[net_->output_blob_indices()[j]];
-        for (int k = 0; k < result[j]->count(); ++k) {
-          ostringstream loss_msg_stream;
-          if (loss_weight) {
-            loss_msg_stream << " (* " << loss_weight
-                            << " = " << loss_weight * result_vec[k] << " loss)";
-          }
-          LOG_IF(INFO, Caffe::root_solver()) << "    Train net output #"
-              << score_index++ << ": " << output_name << " = "
-              << result_vec[k] << loss_msg_stream.str();
-        }
-      }
-    }
-    for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_gradients_ready();
-    }
-
-    // Collect grads from workers
-    // MPI_Allreduce(myDiff, gDiff, neuron_sum, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    // for (int i = 0; i < neuron_sum; ++i) {
-    //   gDiff[i] /= numprocs;
-    // }
-
-    // Update the diff of workers
-    // counter = 0;
-    // for (int i = 0; i < blob_num; ++i) {
-    //   for (int j = 0; j < neuron_num[i]; ++j) {
-    //     net_->learnable_params()[i]->mutable_cpu_diff()[j] = gDiff[counter++];
-    //   }
-    // }
-
-    ApplyUpdate();
-
-    // Increment the internal iter_ counter -- its value should always indicate
-    // the number of times the weights have been updated.
-    ++iter_;
-
-    SolverAction::Enum request = GetRequestedAction();
-
-    // Save a snapshot if needed.
-    if ((param_.snapshot()
-         && iter_ % param_.snapshot() == 0
-         && Caffe::root_solver()) ||
-         (request == SolverAction::SNAPSHOT)) {
-      Snapshot();
-    }
-    if (SolverAction::STOP == request) {
-      requested_early_exit_ = true;
-      // Break out of training loop.
-      break;
-    }
-
   }
-  // delete [] myDiff;
-  // delete [] gDiff;
-  // delete [] neuron_num;
-  MPI_Finalize();
+  Psenv::finalize();
 }
 
 template <typename Dtype>

@@ -11,7 +11,9 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
 
+#include "ps/server.hpp"
 #include "ps/worker.hpp"
+#include "ps/message.hpp"
 
 namespace caffe {
 
@@ -183,21 +185,33 @@ void Solver<Dtype>::InitTestNets() {
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
   // global variable
-  int blob_num = net_->learnable_params().size();
-  int neuron_sum = 0;
-  int* neuron_num = new int[blob_num];
-  for (int i = 0 ; i < blob_num; ++i) {
-    neuron_num[i] = net_->learnable_params()[i]->count();
-    neuron_sum += neuron_num[i]; 
-  }
-  int numprocs, myid;
-  MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
-  MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+  // int blob_num = net_->learnable_params().size();
+  // int neuron_sum = 0;
+  // int* neuron_num = new int[blob_num];
+  // for (int i = 0 ; i < blob_num; ++i) {
+  //   neuron_num[i] = net_->learnable_params()[i]->count();
+  //   neuron_sum += neuron_num[i]; 
+  // }
+
+  // init parameter
+  // ps::Psenv env;
+  // ps::Server* server = NULL;
+  // ps::Worker* worker = NULL;
+
+  // init server or worker for current rank
+  // if (env.isServer()) {
+  //   server = env.getServer();
+  //   assert(server != NULL);
+  //   server.init(neuron_sum);
+  // } else {
+  //   worker = env.getWorker();
+  // }
+
   // exchanged
-  double* myDiff = new double[neuron_sum];
+  // double* myDiff = new double[neuron_sum];
   // sync data
-  double* gDiff = new double[neuron_sum];
-  int counter = 0;
+  // double* gDiff = new double[neuron_sum];
+  // int counter = 0;
 
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
@@ -207,7 +221,17 @@ void Solver<Dtype>::Step(int iters) {
   iteration_timer_.Start();
 
   while (iter_ < stop_iter) {
-    
+    // // sync version
+    // if (env.isServer()) {
+    //   // server.computeWeight();
+    //   server.sendWeightMsg();
+    //   server.recvDiffMsg();
+    // } else {
+    //   // worker.pull(weight);
+    //   // update weight
+    //   // compute diff here
+    //   // worker.push(diff);
+    // }
     // zero-init the params
     net_->ClearParamDiffs();
     if (param_.test_interval() && iter_ % param_.test_interval() == 0
@@ -267,24 +291,19 @@ void Solver<Dtype>::Step(int iters) {
       callbacks_[i]->on_gradients_ready();
     }
 
-    counter = 0;
-    for (int i = 0; i < blob_num; ++i) {
-      for (int j = 0; j < neuron_num[i]; ++j) {
-        myDiff[counter++] = net_->learnable_params()[i]->cpu_diff()[j];
-      }
-    }
-    MPI_Allreduce(myDiff, gDiff, neuron_sum, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    // Collect grads from workers
+    // MPI_Allreduce(myDiff, gDiff, neuron_sum, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    // for (int i = 0; i < neuron_sum; ++i) {
+    //   gDiff[i] /= numprocs;
+    // }
 
-    for (int i = 0; i < neuron_sum; ++i) {
-      gDiff[i] /= numprocs;
-    }
-
-    counter = 0;
-    for (int i = 0; i < blob_num; ++i) {
-      for (int j = 0; j < neuron_num[i]; ++j) {
-        net_->learnable_params()[i]->mutable_cpu_diff()[j] = gDiff[counter++];
-      }
-    }
+    // Update the diff of workers
+    // counter = 0;
+    // for (int i = 0; i < blob_num; ++i) {
+    //   for (int j = 0; j < neuron_num[i]; ++j) {
+    //     net_->learnable_params()[i]->mutable_cpu_diff()[j] = gDiff[counter++];
+    //   }
+    // }
 
     ApplyUpdate();
 
@@ -308,9 +327,9 @@ void Solver<Dtype>::Step(int iters) {
     }
 
   }
-  delete [] myDiff;
-  delete [] gDiff;
-  delete [] neuron_num;
+  // delete [] myDiff;
+  // delete [] gDiff;
+  // delete [] neuron_num;
   MPI_Finalize();
 }
 

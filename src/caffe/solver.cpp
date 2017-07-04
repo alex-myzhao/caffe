@@ -242,8 +242,6 @@ void Solver<Dtype>::Step(int iters) {
       if (debugPS) printf("[PS]: Server receive gradients ... \n");
       server->recvDiff();
       if (debugPS) printf("[PS]: --- Gradient received ---\n");
-
-      iter_++;
     } else {
       net_->ClearParamDiffs();
       // zero-init the params
@@ -328,23 +326,23 @@ void Solver<Dtype>::Step(int iters) {
       for (int i = 0; i < callbacks_.size(); ++i) {
         callbacks_[i]->on_gradients_ready();
       }
-      // Increment the internal iter_ counter -- its value should always indicate
-      // the number of times the weights have been updated.
-      ++iter_;
-      SolverAction::Enum request = GetRequestedAction();
+    }
+    // Increment the internal iter_ counter -- its value should always indicate
+    // the number of times the weights have been updated.
+    ++iter_;
+    SolverAction::Enum request = GetRequestedAction();
 
-      // Save a snapshot if needed.
-      if ((param_.snapshot()
-          && iter_ % param_.snapshot() == 0
-          && Caffe::root_solver()) ||
-          (request == SolverAction::SNAPSHOT)) {
-        Snapshot();
-      }
-      if (SolverAction::STOP == request) {
-        requested_early_exit_ = true;
-        // Break out of training loop.
-        break;
-      }
+    // Save a snapshot if needed.
+    if ((param_.snapshot()
+        && iter_ % param_.snapshot() == 0
+        && Caffe::root_solver()) ||
+        (request == SolverAction::SNAPSHOT)) {
+      Snapshot();
+    }
+    if (SolverAction::STOP == request) {
+      requested_early_exit_ = true;
+      // Break out of training loop.
+      break;
     }
   }
   Psenv::finalize();

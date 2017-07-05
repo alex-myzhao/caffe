@@ -235,12 +235,14 @@ void Solver<Dtype>::Step(int iters) {
 
       // [PS] Send weight to workers
       if (debugPS) printf("[PS]: Server send weights ...\n");
-      server->sendWeight();
+      // server->sendWeight();
+      server->asyncOp(Server::OP_SEND);  // async
       if (debugPS) printf("[PS]: --- Weights have been sent ---\n");
 
       // [PS] Receive diff from workers
       if (debugPS) printf("[PS]: Server receive gradients ... \n");
-      server->recvDiff();
+      // server->recvDiff();
+      server->asyncOp(Server::OP_RECV);  // async
       if (debugPS) printf("[PS]: --- Gradient received ---\n");
     } else {
       net_->ClearParamDiffs();
@@ -262,7 +264,8 @@ void Solver<Dtype>::Step(int iters) {
       net_->set_debug_info(display && param_.debug_info());
       //  [PS] Get weight from the server
       if (debugPS) printf("[PS]: Workers pull weights ...\n");
-      worker->pull();
+      // worker->pull();
+      worker->pullAsync();
       if (debugPS) printf("[PS]: --- weights collected ---\n");
 
       // copy weight to the net
@@ -289,7 +292,8 @@ void Solver<Dtype>::Step(int iters) {
 
       // [PS] Push diff to the server
       if (debugPS) printf("[PS]: Workers push gradients ...\n");
-      worker->push();
+      // worker->push();
+      worker->pushAsync();
       if (debugPS) printf("[PS]: --- Gradients have been pushed ---\n");
 
       loss /= param_.iter_size();

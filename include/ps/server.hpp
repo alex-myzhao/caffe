@@ -2,7 +2,13 @@
 #define PS_SERVER_HPP_
 
 #include <cstring>
+#include <cstdio>
 #include <iostream>
+
+
+#include <boost/thread/thread.hpp>
+#include <boost/function.hpp>
+#include <boost/bind.hpp>
 
 #include "mpi.h"
 
@@ -18,19 +24,21 @@ class Psenv;
  */
 class Server : public Node {
   public:
-    ~Server() {
-      delete [] data_;
-      delete [] diff_;
-    }
+    static const int OP_SEND = 0;
+    static const int OP_RECV = 1;
+    ~Server() {}
     // recv gradients from workers, sync version
     void recvDiff();
-    void sendWeight();
+    void sendWeight() const;
+    // async version
+    void asyncOp(int op);
+    void sendWeightToAWorker(int rank);
+    void recvDiffFromAWorker(int rank);
     // Computer weight with diff, data and learning rate
     void computeWeight(double lr=0.01);
-    void setWeight(double* computedData);
   private:
-    Server(int rank, int size, int root, int count) 
-      : Node(rank, size, root, count) {}
+    Server(int rank, int size, int root, int count, bool debug=false) 
+      : Node(rank, size, root, count, debug) {}
 
   friend class Psenv;
 };
